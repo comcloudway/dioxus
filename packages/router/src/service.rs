@@ -364,7 +364,7 @@ mod web {
         WebRouter {
             history: web_sys::window().unwrap().history().unwrap(),
             window: web_sys::window().unwrap(),
-            _listener: EventListener::new(&web_sys::window().unwrap(), "popstate", move |_| {
+            _listener: EventListener::new(&web_sys::window().unwrap(), "hashchange", move |_| {
                 let _ = tx.unbounded_send(RouteEvent::Pop);
             }),
         }
