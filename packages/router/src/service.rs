@@ -217,7 +217,11 @@ fn clean_path(path: &str) -> &str {
 }
 
 fn route_matches_path(cur: &Url, attempt: &str, base_url: Option<&String>) -> bool {
-    let cur_piece_iter = cur.path_segments().unwrap();
+    let mut cur_piece_iter = cur.fragment().unwrap_or("/")
+                                           .split('/')
+                                           .map(|s|String::from(s))
+        .filter(|d| !d.is_empty());
+//    let cur_piece_iter = cur.path_segments().unwrap();
 
     let mut cur_pieces = match base_url {
         // baseurl is naive right now and doesn't support multiple nesting levels
@@ -225,16 +229,21 @@ fn route_matches_path(cur: &Url, attempt: &str, base_url: Option<&String>) -> bo
         None => cur_piece_iter.collect::<Vec<_>>(),
     };
 
-    if attempt == "/" && cur_pieces.len() == 1 && cur_pieces[0].is_empty() {
+    if attempt == "/" && cur_pieces.is_empty() {
         return true;
     }
 
     // allow slashes at the end of the path
-    if cur_pieces.last() == Some(&"") {
-        cur_pieces.pop();
+    if let Some(s) = cur_pieces.last() {
+        if s.is_empty() {
+            cur_pieces.pop();
+        }
     }
 
-    let attempt_pieces = clean_path(attempt).split('/').collect::<Vec<_>>();
+    let attempt_pieces = clean_path(attempt)
+        .split('/')
+        .filter(|d|!d.is_empty())
+        .collect::<Vec<_>>();
 
     log::trace!("Comparing {:?} to {:?}", cur_pieces, attempt_pieces);
 
@@ -301,15 +310,15 @@ mod web {
 
     use futures_channel::mpsc::UnboundedSender;
     use gloo_events::EventListener;
+     use gloo_history::History;
     use std::any::Any;
-    use web_sys::History;
 
     pub struct WebRouter {
         // keep it around so it drops when the router is dropped
         _listener: gloo_events::EventListener,
 
         window: web_sys::Window,
-        history: History,
+        history: gloo_history::HashHistory,
     }
 
     impl RouterProvider for WebRouter {
@@ -320,11 +329,8 @@ mod web {
                 serialized_state,
             } = route;
 
-            let _ = self.history.push_state_with_url(
-                &wasm_bindgen::JsValue::from_str(serialized_state.as_deref().unwrap_or("")),
-                title.as_deref().unwrap_or(""),
-                Some(url.as_str()),
-            );
+            let fr = url.fragment().unwrap_or("/");
+            self.history.push("/#".to_owned()+fr);
         }
 
         fn replace(&self, route: &ParsedRoute) {
@@ -333,13 +339,9 @@ mod web {
                 title,
                 serialized_state,
             } = route;
-
-            let _ = self.history.replace_state_with_url(
-                &wasm_bindgen::JsValue::from_str(serialized_state.as_deref().unwrap_or("")),
-                title.as_deref().unwrap_or(""),
-                Some(url.as_str()),
-            );
-        }
+            let fr = url.fragment().unwrap_or("/");
+            self.history.replace("/#".to_owned()+fr);
+     }
 
         fn native_location(&self) -> Box<dyn Any> {
             Box::new(self.window.location())
@@ -362,10 +364,16 @@ mod web {
 
     pub(crate) fn new(tx: UnboundedSender<RouteEvent>) -> WebRouter {
         WebRouter {
-            history: web_sys::window().unwrap().history().unwrap(),
+            history: gloo_history::HashHistory::new(),
             window: web_sys::window().unwrap(),
             _listener: EventListener::new(&web_sys::window().unwrap(), "hashchange", move |_| {
-                let _ = tx.unbounded_send(RouteEvent::Pop);
+                let url = url::Url::parse(&web_sys::window().unwrap().location().href().unwrap())
+                    .unwrap();
+                let _ = tx.unbounded_send(RouteEvent::Replace {
+                    route: url.fragment().unwrap_or("/").to_string(),
+                    title: None,
+                    serialized_state: None
+                });
             }),
         }
     }
